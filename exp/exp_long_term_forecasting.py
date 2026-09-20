@@ -175,13 +175,44 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     iter_count = 0
                     time_now = time.time()
 
-                if self.args.use_amp:
-                    scaler.scale(loss).backward()
-                    scaler.step(model_optim)
-                    scaler.update()
+              # ========== SAM/普通训练分支 ==========
+                if getattr(self.args, 'use_sam', False):
+                    # 定义损失函数闭包（返回三个损失）
+                    def sam_loss_fn(outputs, targets):
+                        f_dim = -1 if self.args.features == 'MS' else 0
+                        outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                        targets = targets[:, -self.args.pred_len:, f_dim:]
+                        
+                        # 融合损失（主损失）
+                        loss_fusion = criterion(outputs, targets)
+                        
+                        # 单模态1损失：只用时间序列分支预测
+                        # 这里假设模型有 temporal_head 分支输出，你需要根据实际模型调整
+                        # 如果模型不支持单模态输出，可以用融合损失近似单模态损失
+                        loss_modal1 = criterion(outputs, targets) * 0.5  # 视觉模态近似损失
+                        loss_modal2 = criterion(outputs, targets) * 0.5  # 文本模态近似损失
+                        
+                        return loss_fusion, loss_modal1, loss_modal2
+                    
+                    # 设置闭包
+                    inputs = (batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    targets = batch_y
+                    model_optim.set_closure(sam_loss_fn, inputs, targets)
+                    
+                    # 执行SAM两步更新
+                    loss_val = model_optim.step()
+                    train_loss.append(loss_val)
                 else:
-                    loss.backward()
-                    model_optim.step()
+                    # 普通训练（原逻辑）
+                    if self.args.use_amp:
+                        scaler.scale(loss).backward()
+                        scaler.step(model_optim)
+                        scaler.update()
+                    else:
+                        loss.backward()
+                        model_optim.step()
+                          
+
 
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
