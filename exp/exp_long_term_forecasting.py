@@ -1,3 +1,4 @@
+from src.TimeVLM.sam_decomp_optimizer import SAMDecompOptimizer
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
 from utils.tools import EarlyStopping, adjust_learning_rate, visual
@@ -30,8 +31,46 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         return data_set, data_loader
 
     def _select_optimizer(self):
+    # 如果开启SAM，使用SAMDecomp优化器
+    if getattr(self.args, 'use_sam', False):
+        # 按模态分组参数
+        model = self.model.module if hasattr(self.model, 'module') else self.model
+        
+        param_groups = [
+            # 模态1：VLM视觉编码器（对应TimeVLM的vision部分）
+            {"params": list(model.vlm_model.visual.parameters()) if hasattr(model.vlm_model, 'visual') else [],
+             "name": "modal1",
+             "rho": self.args.sam_rho,
+             "adaptive": self.args.sam_adaptive},
+            
+            # 模态2：VLM文本编码器（对应TimeVLM的text部分）
+            {"params": list(model.vlm_model.transformer.parameters()) if hasattr(model.vlm_model, 'transformer') else [],
+             "name": "modal2",
+             "rho": self.args.sam_rho,
+             "adaptive": self.args.sam_adaptive},
+            
+            # 其他参数：时间序列部分 + 融合层
+            {"params": [p for n, p in model.named_parameters() 
+                       if not any(x in n for x in ['vlm_model.visual', 'vlm_model.transformer'])],
+             "name": "other",
+             "rho": self.args.sam_rho,
+             "adaptive": self.args.sam_adaptive},
+        ]
+        
+        base_optimizer = optim.Adam
+        model_optim = SAMDecompOptimizer(
+            params=param_groups,
+            base_optimizer=base_optimizer,
+            model=model,
+            rho=self.args.sam_rho,
+            adaptive=self.args.sam_adaptive,
+            lr=self.args.learning_rate,
+        )
+        return model_optim
+    else:
         model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
         return model_optim
+
 
     def _select_criterion(self):
         criterion = nn.MSELoss()
