@@ -127,6 +127,11 @@ if __name__ == '__main__':
     parser.add_argument('--p_hidden_dims', type=int, nargs='+', default=[128, 128], help='hidden layer dimensions of projector (List)')
     parser.add_argument('--p_hidden_layers', type=int, default=2, help='number of hidden layers in projector')
 
+    # ========== SAM Decomp 优化器参数 ==========
+    parser.add_argument('--use_sam', action='store_true', default=False, help='是否使用SAM Decomp优化器')
+    parser.add_argument('--sam_rho', type=float, default=0.05, help='SAM扰动半径')
+    parser.add_argument('--sam_adaptive', type=bool, default=True, help='是否使用自适应扰动(APS)')
+
     # metrics (dtw)
     parser.add_argument('--use_dtw', type=bool, default=False, help='the controller of using dtw metric (dtw is time consuming, not suggested unless necessary)')
     
