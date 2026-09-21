@@ -116,7 +116,7 @@ class Exp_Short_Term_Forecast(Exp_Basic):
                 if getattr(self.args, 'use_sam', False):
                     def sam_loss_fn(outputs, targets):
                         f_dim = -1 if self.args.features == 'MS' else 0
-                        outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                        outputs = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
                         targets = targets[:, -self.args.pred_len:, f_dim:]
                         batch_y_mark_local = batch_y_mark[:, -self.args.pred_len:, f_dim:]
                         loss_fusion = criterion(batch_x, self.args.frequency_map, outputs, targets, batch_y_mark_local)
@@ -135,7 +135,7 @@ class Exp_Short_Term_Forecast(Exp_Basic):
                     outputs = self.model(batch_x, None, dec_inp, None)
 
                     f_dim = -1 if self.args.features == 'MS' else 0
-                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                    outputs = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
                     batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
 
                     batch_y_mark = batch_y_mark[:, -self.args.pred_len:, f_dim:].to(self.device)
@@ -194,7 +194,7 @@ class Exp_Short_Term_Forecast(Exp_Basic):
                                                                       dec_inp[id_list[i]:id_list[i + 1]],
                                                                       None).detach().cpu()
             f_dim = -1 if self.args.features == 'MS' else 0
-            outputs = outputs[:, -self.args.pred_len:, f_dim:]
+            outputs = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
             pred = outputs
             true = torch.from_numpy(np.array(y))
             batch_y_mark = torch.ones(true.shape)
@@ -237,7 +237,7 @@ class Exp_Short_Term_Forecast(Exp_Basic):
                     print(id_list[i])
 
             f_dim = -1 if self.args.features == 'MS' else 0
-            outputs = outputs[:, -self.args.pred_len:, f_dim:]
+            outputs = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
             outputs = outputs.detach().cpu().numpy()
 
             preds = outputs
