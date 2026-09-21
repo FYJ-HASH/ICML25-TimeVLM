@@ -31,32 +31,25 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         return data_set, data_loader
 
     def _select_optimizer(self):
-        # 如果开启SAM，使用SAMDecomp优化器
         if getattr(self.args, 'use_sam', False):
-            # 按模态分组参数
             model = self.model.module if hasattr(self.model, 'module') else self.model
-            
+
             param_groups = [
-                # 模态1：VLM视觉编码器（对应TimeVLM的vision部分）
                 {"params": list(model.vlm_model.vision_model.parameters()) if hasattr(model.vlm_model, 'vision_model') else [],
                  "name": "modal1",
                  "rho": self.args.sam_rho,
                  "adaptive": self.args.sam_adaptive},
-                
-                # 模态2：VLM文本编码器（对应TimeVLM的text部分）
                 {"params": list(model.vlm_model.text_model.parameters()) if hasattr(model.vlm_model, 'text_model') else [],
                  "name": "modal2",
                  "rho": self.args.sam_rho,
                  "adaptive": self.args.sam_adaptive},
-                
-                # 其他参数：时间序列部分 + 融合层
-                {"params": [p for n, p in model.named_parameters() 
+                {"params": [p for n, p in model.named_parameters()
                            if not any(x in n for x in ['vlm_model.vision_model', 'vlm_model.text_model'])],
                  "name": "other",
                  "rho": self.args.sam_rho,
                  "adaptive": self.args.sam_adaptive},
             ]
-            
+
             base_optimizer = optim.Adam
             model_optim = SAMDecompOptimizer(
                 params=param_groups,
@@ -130,12 +123,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         if self.args.use_amp:
             scaler = torch.cuda.amp.GradScaler()
 
-        for epoch in range(self.args.train_epochs):
-            iter_count = 0
-            train_loss = []
-
-            self.model.train()
-            epoch_time = time.time()
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
                 iter_count += 1
                 batch_x = batch_x.float().to(self.device)
@@ -143,13 +130,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 batch_x_mark = batch_x_mark.float().to(self.device)
                 batch_y_mark = batch_y_mark.float().to(self.device)
 
-                # decoder input
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
 
-                 # encoder - decoder
                 if getattr(self.args, 'use_sam', False):
-                    # SAM 分支：前向/反向全部在 optimizer.step() 的闭包里完成
                     def sam_loss_fn(outputs, targets):
                         f_dim = -1 if self.args.features == 'MS' else 0
                         outputs = outputs[:, -self.args.pred_len:, f_dim:]
