@@ -201,7 +201,9 @@ class SAMDecompOptimizer(Optimizer):
 
     @torch.no_grad()
     def _grad_specific_norm(self, group_name):
-        shared_device = self.param_groups[0]["params"][0].device
+        shared_device = self._first_param_device()
+        if shared_device is None:
+            return torch.tensor(0.0)
         for group in self.param_groups:
             if group["name"] == group_name:
                 norms = [
@@ -216,7 +218,9 @@ class SAMDecompOptimizer(Optimizer):
 
     @torch.no_grad()
     def _grad_norm(self):
-        shared_device = self.param_groups[0]["params"][0].device
+        shared_device = self._first_param_device()
+        if shared_device is None:
+            return torch.tensor(0.0)
         norms = [
             ((torch.abs(p) if group["adaptive"] else 1.0) * p.grad).norm(p=2).to(shared_device)
             for group in self.param_groups
@@ -226,3 +230,9 @@ class SAMDecompOptimizer(Optimizer):
         if len(norms) == 0:
             return torch.tensor(0.0, device=shared_device)
         return torch.norm(torch.stack(norms), p=2)
+
+    def _first_param_device(self):
+        for group in self.param_groups:
+            if len(group["params"]) > 0:
+                return group["params"][0].device
+        return None
