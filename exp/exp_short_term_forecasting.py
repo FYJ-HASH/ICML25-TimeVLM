@@ -1,3 +1,4 @@
+from src.TimeVLM.sam_decomp_optimizer import SAMDecompOptimizer
 from data_provider.data_factory import data_provider
 from data_provider.m4 import M4Meta
 from exp.exp_basic import Exp_Basic
@@ -37,8 +38,38 @@ class Exp_Short_Term_Forecast(Exp_Basic):
         return data_set, data_loader
 
     def _select_optimizer(self):
-        model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
-        return model_optim
+        if getattr(self.args, 'use_sam', False):
+            model = self.model.module if hasattr(self.model, 'module') else self.model
+
+            param_groups = [
+                {"params": list(model.vlm_model.vision_model.parameters()) if hasattr(model.vlm_model, 'vision_model') else [],
+                 "name": "modal1",
+                 "rho": self.args.sam_rho,
+                 "adaptive": self.args.sam_adaptive},
+                {"params": list(model.vlm_model.text_model.parameters()) if hasattr(model.vlm_model, 'text_model') else [],
+                 "name": "modal2",
+                 "rho": self.args.sam_rho,
+                 "adaptive": self.args.sam_adaptive},
+                {"params": [p for n, p in model.named_parameters()
+                           if not any(x in n for x in ['vlm_model.vision_model', 'vlm_model.text_model'])],
+                 "name": "other",
+                 "rho": self.args.sam_rho,
+                 "adaptive": self.args.sam_adaptive},
+            ]
+
+            base_optimizer = optim.Adam
+            model_optim = SAMDecompOptimizer(
+                params=param_groups,
+                base_optimizer=base_optimizer,
+                model=model,
+                rho=self.args.sam_rho,
+                adaptive=self.args.sam_adaptive,
+                lr=self.args.learning_rate,
+            )
+            return model_optim
+        else:
+            model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
+            return model_optim
 
     def _select_criterion(self, loss_name='MSE'):
         if loss_name == 'MSE':
@@ -75,38 +106,54 @@ class Exp_Short_Term_Forecast(Exp_Basic):
             epoch_time = time.time()
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
                 iter_count += 1
-                model_optim.zero_grad()
                 batch_x = batch_x.float().to(self.device)
-
                 batch_y = batch_y.float().to(self.device)
                 batch_y_mark = batch_y_mark.float().to(self.device)
 
-                # decoder input
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
 
-                outputs = self.model(batch_x, None, dec_inp, None)
+                if getattr(self.args, 'use_sam', False):
+                    def sam_loss_fn(outputs, targets):
+                        f_dim = -1 if self.args.features == 'MS' else 0
+                        outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                        targets = targets[:, -self.args.pred_len:, f_dim:]
+                        batch_y_mark_local = batch_y_mark[:, -self.args.pred_len:, f_dim:]
+                        loss_fusion = criterion(batch_x, self.args.frequency_map, outputs, targets, batch_y_mark_local)
+                        loss_modal1 = loss_fusion
+                        loss_modal2 = loss_fusion
+                        return loss_fusion, loss_modal1, loss_modal2
 
-                f_dim = -1 if self.args.features == 'MS' else 0
-                outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                    inputs = (batch_x, None, dec_inp, None)
+                    targets = batch_y
+                    model_optim.set_closure(sam_loss_fn, inputs, targets)
+                    loss_val = model_optim.step()
+                    train_loss.append(loss_val)
+                    loss = loss_val
+                else:
+                    model_optim.zero_grad()
+                    outputs = self.model(batch_x, None, dec_inp, None)
 
-                batch_y_mark = batch_y_mark[:, -self.args.pred_len:, f_dim:].to(self.device)
-                loss_value = criterion(batch_x, self.args.frequency_map, outputs, batch_y, batch_y_mark)
-                loss_sharpness = mse((outputs[:, 1:, :] - outputs[:, :-1, :]), (batch_y[:, 1:, :] - batch_y[:, :-1, :]))
-                loss = loss_value  # + loss_sharpness * 1e-5
-                train_loss.append(loss.item())
+                    f_dim = -1 if self.args.features == 'MS' else 0
+                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                    batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+
+                    batch_y_mark = batch_y_mark[:, -self.args.pred_len:, f_dim:].to(self.device)
+                    loss_value = criterion(batch_x, self.args.frequency_map, outputs, batch_y, batch_y_mark)
+                    loss_sharpness = mse((outputs[:, 1:, :] - outputs[:, :-1, :]), (batch_y[:, 1:, :] - batch_y[:, :-1, :]))
+                    loss = loss_value
+                    train_loss.append(loss.item())
+
+                    loss.backward()
+                    model_optim.step()
 
                 if (i + 1) % 100 == 0:
-                    print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
+                    print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item() if hasattr(loss, 'item') else loss))
                     speed = (time.time() - time_now) / iter_count
                     left_time = speed * ((self.args.train_epochs - epoch) * train_steps - i)
                     print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
                     iter_count = 0
                     time_now = time.time()
-
-                loss.backward()
-                model_optim.step()
 
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
