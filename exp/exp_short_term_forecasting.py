@@ -192,10 +192,9 @@ class Exp_Short_Term_Forecast(Exp_Basic):
             for i in range(len(id_list) - 1):
                 outputs[id_list[i]:id_list[i + 1], :, :] = self.model(x[id_list[i]:id_list[i + 1]], None,
                                                                       dec_inp[id_list[i]:id_list[i + 1]],
-                                                                      None).detach().cpu()
+                                                                      None)['fusion'].detach().cpu()
             f_dim = -1 if self.args.features == 'MS' else 0
-            outputs = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
-            pred = outputs
+            pred = outputs[:, -self.args.pred_len:, f_dim:]
             true = torch.from_numpy(np.array(y))
             batch_y_mark = torch.ones(true.shape)
 
@@ -231,13 +230,13 @@ class Exp_Short_Term_Forecast(Exp_Basic):
             id_list = np.append(id_list, B)
             for i in range(len(id_list) - 1):
                 outputs[id_list[i]:id_list[i + 1], :, :] = self.model(x[id_list[i]:id_list[i + 1]], None,
-                                                                      dec_inp[id_list[i]:id_list[i + 1]], None)
+                                                                      dec_inp[id_list[i]:id_list[i + 1]], None)['fusion']
 
                 if id_list[i] % 1000 == 0:
                     print(id_list[i])
 
             f_dim = -1 if self.args.features == 'MS' else 0
-            outputs = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
+            outputs = outputs[:, -self.args.pred_len:, f_dim:]
             outputs = outputs.detach().cpu().numpy()
 
             preds = outputs
