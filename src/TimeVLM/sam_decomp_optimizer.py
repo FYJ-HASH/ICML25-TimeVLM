@@ -236,3 +236,4 @@ class SAMDecompOptimizer(Optimizer):
             if len(group["params"]) > 0:
                 return group["params"][0].device
         return None
+
