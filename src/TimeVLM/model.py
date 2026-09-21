@@ -296,7 +296,12 @@ class Model(nn.Module):
             torch.cat([memory_features, fused_features], dim=-1)
         ) + memory_features  # [B, n_vars, pred_len]
         
-        return predictions.permute(0, 2, 1)  # [B, pred_len, n_vars]
+        #return predictions.permute(0, 2, 1)  # [B, pred_len, n_vars]
+         return {
+             'temporal': memory_features.permute(0, 2, 1),       # 纯时序分支
+             'multimodal': multimodal_features.permute(0, 2, 1), # 多模态分支（图像+文本）
+             'fusion': predictions.permute(0, 2, 1),             # 融合后
+         }
 
     def forward(self, x_enc, x_mark_enc=None, x_dec=None, x_mark_dec=None, mask=None):
         B, L, D = x_enc.shape
@@ -316,8 +321,15 @@ class Model(nn.Module):
         predictions = self.forward_prediction(x_enc, vision_embeddings, text_embeddings)
         
         # Denormalize output
-        y = self._denormalize_output(predictions, means, stdev)
-        return y
+        #y = self._denormalize_output(predictions, means, stdev)
+        #return y
+        preds_dict = self.forward_prediction(x_enc, vision_embeddings, text_embeddings)
+
+        return {
+            'temporal': self._denormalize_output(preds_dict['temporal'], means, stdev),
+            'multimodal': self._denormalize_output(preds_dict['multimodal'], means, stdev),
+            'fusion': self._denormalize_output(preds_dict['fusion'], means, stdev),
+         }
 
     def _normalize_input(self, x):
         means = x.mean(1, keepdim=True).detach()
