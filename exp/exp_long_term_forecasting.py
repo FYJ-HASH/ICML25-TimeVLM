@@ -123,68 +123,71 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         if self.args.use_amp:
             scaler = torch.cuda.amp.GradScaler()
 
-        for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
-            iter_count += 1
-            batch_x = batch_x.float().to(self.device)
-            batch_y = batch_y.float().to(self.device)
-            batch_x_mark = batch_x_mark.float().to(self.device)
-            batch_y_mark = batch_y_mark.float().to(self.device)
+        for epoch in range(self.args.train_epochs):
+            iter_count = 0
+            train_loss = []
 
-            dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-            dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
+            self.model.train()
+            epoch_time = time.time()
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
+                iter_count += 1
+                batch_x = batch_x.float().to(self.device)
+                batch_y = batch_y.float().to(self.device)
+                batch_x_mark = batch_x_mark.float().to(self.device)
+                batch_y_mark = batch_y_mark.float().to(self.device)
 
-            if getattr(self.args, 'use_sam', False):
-                def sam_loss_fn(outputs, targets):
-                    f_dim = -1 if self.args.features == 'MS' else 0
-                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                    targets = targets[:, -self.args.pred_len:, f_dim:]
-                    loss_fusion = criterion(outputs, targets)
-                    loss_modal1 = criterion(outputs, targets)
-                    loss_modal2 = criterion(outputs, targets)
-                    return loss_fusion, loss_modal1, loss_modal2
+                dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
+                dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
 
-                inputs = (batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                targets = batch_y
-                model_optim.set_closure(sam_loss_fn, inputs, targets)
-                loss_val = model_optim.step()
-                train_loss.append(loss_val)
-                loss = loss_val
-            else:
-                model_optim.zero_grad()
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
+                if getattr(self.args, 'use_sam', False):
+                    def sam_loss_fn(outputs, targets):
+                        f_dim = -1 if self.args.features == 'MS' else 0
+                        outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                        targets = targets[:, -self.args.pred_len:, f_dim:]
+                        loss_fusion = criterion(outputs, targets)
+                        loss_modal1 = criterion(outputs, targets)
+                        loss_modal2 = criterion(outputs, targets)
+                        return loss_fusion, loss_modal1, loss_modal2
+
+                    inputs = (batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    targets = batch_y
+                    model_optim.set_closure(sam_loss_fn, inputs, targets)
+                    loss_val = model_optim.step()
+                    train_loss.append(loss_val)
+                    loss = loss_val
+                else:
+                    model_optim.zero_grad()
+                    if self.args.use_amp:
+                        with torch.cuda.amp.autocast():
+                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                            f_dim = -1 if self.args.features == 'MS' else 0
+                            outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                            batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                            loss = criterion(outputs, batch_y)
+                            train_loss.append(loss.item())
+                    else:
                         outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                         f_dim = -1 if self.args.features == 'MS' else 0
                         outputs = outputs[:, -self.args.pred_len:, f_dim:]
                         batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
                         loss = criterion(outputs, batch_y)
                         train_loss.append(loss.item())
-                else:
-                    outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                    f_dim = -1 if self.args.features == 'MS' else 0
-                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                    batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
-                    loss = criterion(outputs, batch_y)
-                    train_loss.append(loss.item())
 
-                if self.args.use_amp:
-                    scaler.scale(loss).backward()
-                    scaler.step(model_optim)
-                    scaler.update()
-                else:
-                    loss.backward()
-                    model_optim.step()
+                    if self.args.use_amp:
+                        scaler.scale(loss).backward()
+                        scaler.step(model_optim)
+                        scaler.update()
+                    else:
+                        loss.backward()
+                        model_optim.step()
 
-            if (i + 1) % 100 == 0:
-                print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item() if hasattr(loss, 'item') else loss))
-                speed = (time.time() - time_now) / iter_count
-                left_time = speed * ((self.args.train_epochs - epoch) * train_steps - i)
-                print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
-                iter_count = 0
-                time_now = time.time()
-                                                
-                          
-
+                if (i + 1) % 100 == 0:
+                    print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item() if hasattr(loss, 'item') else loss))
+                    speed = (time.time() - time_now) / iter_count
+                    left_time = speed * ((self.args.train_epochs - epoch) * train_steps - i)
+                    print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
+                    iter_count = 0
+                    time_now = time.time()
 
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
