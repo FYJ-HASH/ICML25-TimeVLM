@@ -166,10 +166,21 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
                     else:
                         outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                         f_dim = -1 if self.args.features == 'MS' else 0
-                        outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                        batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
-                        loss = criterion(outputs, batch_y)
+    
+                        # 分别计算三个分支的 loss
+                        loss_temporal = criterion(outputs['temporal'][:, -self.args.pred_len:, f_dim:], batch_y[:, -self.args.pred_len:, f_dim:].to(self.device))
+                        loss_multimodal = criterion(outputs['multimodal'][:, -self.args.pred_len:, f_dim:], batch_y[:, -self.args.pred_len:, f_dim:].to(self.device))
+                        loss_fusion = criterion(outputs['fusion'][:, -self.args.pred_len:, f_dim:], batch_y[:, -self.args.pred_len:, f_dim:].to(self.device))
+    
+                        loss = loss_fusion  # 训练用融合 loss
                         train_loss.append(loss.item())
+    
+                        # 记录各模态 loss（用于画图）
+                        if not hasattr(self, 'loss_history'):
+                            self.loss_history = {'temporal': [], 'multimodal': [], 'fusion': []}
+                        self.loss_history['temporal'].append(loss_temporal.item())
+                        self.loss_history['multimodal'].append(loss_multimodal.item())
+                        self.loss_history['fusion'].append(loss_fusion.item())
 
                     if self.args.use_amp:
                         scaler.scale(loss).backward()
@@ -204,6 +215,12 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
         best_model_path = path + '/' + 'checkpoint.pth'
         self.model.load_state_dict(torch.load(best_model_path))
 
+        # 保存 loss 历史到文件
+        import json
+        if hasattr(self, 'loss_history'):
+            with open(f'loss_history_{setting}.json', 'w') as f:
+                json.dump(self.loss_history, f)
+            print(f"Loss history saved to loss_history_{setting}.json")
         return self.model
 
     def test(self, setting, test=0):
