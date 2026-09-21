@@ -297,7 +297,7 @@ class Model(nn.Module):
         ) + memory_features  # [B, n_vars, pred_len]
         
         #return predictions.permute(0, 2, 1)  # [B, pred_len, n_vars]
-         return {
+        return {
              'temporal': memory_features.permute(0, 2, 1),       # 纯时序分支
              'multimodal': multimodal_features.permute(0, 2, 1), # 多模态分支（图像+文本）
              'fusion': predictions.permute(0, 2, 1),             # 融合后
