@@ -298,10 +298,10 @@ class Model(nn.Module):
         
         #return predictions.permute(0, 2, 1)  # [B, pred_len, n_vars]
         return {
-             'temporal': memory_features.permute(0, 2, 1),       # 纯时序分支
-             'multimodal': multimodal_features.permute(0, 2, 1), # 多模态分支（图像+文本）
-             'fusion': predictions.permute(0, 2, 1),             # 融合后
-         }
+            'temporal': memory_features.permute(0, 2, 1),       # 纯时序分支
+            'multimodal': multimodal_features.permute(0, 2, 1), # 多模态分支（图像+文本）
+            'fusion': predictions.permute(0, 2, 1),             # 融合后
+        }
 
     def forward(self, x_enc, x_mark_enc=None, x_dec=None, x_mark_dec=None, mask=None):
         B, L, D = x_enc.shape
@@ -318,7 +318,7 @@ class Model(nn.Module):
         vision_embeddings, text_embeddings = self.vlm_manager.process_inputs(B, images, prompts)
         
         # Main prediction branch
-        predictions = self.forward_prediction(x_enc, vision_embeddings, text_embeddings)
+        #predictions = self.forward_prediction(x_enc, vision_embeddings, text_embeddings)
         
         # Denormalize output
         #y = self._denormalize_output(predictions, means, stdev)
