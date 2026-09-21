@@ -90,7 +90,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 else:
                     outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 f_dim = -1 if self.args.features == 'MS' else 0
-                outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                outputs = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
                 batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
 
                 pred = outputs.detach().cpu()
@@ -142,7 +142,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 if getattr(self.args, 'use_sam', False):
                     def sam_loss_fn(outputs, targets):
                         f_dim = -1 if self.args.features == 'MS' else 0
-                        outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                        outputs = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
                         targets = targets[:, -self.args.pred_len:, f_dim:]
                         loss_fusion = criterion(outputs, targets)
                         loss_modal1 = criterion(outputs, targets)
@@ -161,14 +161,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         with torch.cuda.amp.autocast():
                             outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                             f_dim = -1 if self.args.features == 'MS' else 0
-                            outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                            outputs = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
                             batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
                             loss = criterion(outputs, batch_y)
                             train_loss.append(loss.item())
                     else:
                         outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                         f_dim = -1 if self.args.features == 'MS' else 0
-                        outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                        outputs = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
                         batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
                         loss = criterion(outputs, batch_y)
                         train_loss.append(loss.item())
@@ -240,7 +240,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
 
                 f_dim = -1 if self.args.features == 'MS' else 0
-                outputs = outputs[:, -self.args.pred_len:, :]
+                outputs = outputs['fusion'][:, -self.args.pred_len:, :]
                 batch_y = batch_y[:, -self.args.pred_len:, :].to(self.device)
                 outputs = outputs.detach().cpu().numpy()
                 batch_y = batch_y.detach().cpu().numpy()
