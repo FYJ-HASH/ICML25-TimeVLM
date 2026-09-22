@@ -133,8 +133,8 @@ class SAMDecompOptimizer(Optimizer):
             for p in group["params"]:
                 if p.grad is None:
                     continue
-                g_u = self.uni_gradients[modality_name][p]
-                g_m = self.multi_gradients[modality_name][p]
+                g_u = self.uni_gradients.get(modality_name, {}).get(p, 0.0)
+                g_m = self.multi_gradients.get(modality_name, {}).get(p, 0.0)
                 decomposed = self._get_decomposed_gradients(g_u, g_m)
                 p.grad = decomposed['uni_parallel_multi'].clone()
 
