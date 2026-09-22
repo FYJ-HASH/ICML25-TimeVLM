@@ -184,16 +184,17 @@ class SAMDecompOptimizer(Optimizer):
         if zero_grad:
             self.base_optimizer.zero_grad()
 
-    @torch.no_grad()
     def step(self, closure=None):
         """完整两步更新"""
         get_grad = closure if closure else self.forward_backward_func
         
-        losses = get_grad()  # 第一次前向
+        with torch.enable_grad():
+            losses = get_grad()  # 第一次前向
         self.first_step(zero_grad=True)
         
         disable_running_stats(self.model)
-        get_grad(only_multi=True)  # 第二次前向（扰动后）
+        with torch.enable_grad():
+            get_grad(only_multi=True)  # 第二次前向（扰动后）
         enable_running_stats(self.model)
         
         self.second_step(zero_grad=True)
