@@ -143,7 +143,9 @@ dot_product = torch.dot(g_u.view(-1), g_m.view(-1))
                 g_u = self.uni_gradients.get(modality_name, {}).get(p, 0.0)
                 g_m = self.multi_gradients.get(modality_name, {}).get(p, 0.0)
                 decomposed = self._get_decomposed_gradients(g_u, g_m)
-                p.grad = decomposed['uni_parallel_multi'].clone()
+                if isinstance(decomposed['uni_parallel_multi'], float):
+                    continue  # 这个参数不在这个模态里，跳过
+                p.grad = decomposed['uni_parallel_multi'].clone()p.grad = decomposed['uni_parallel_multi'].clone()
 
         specific_norm = self._grad_specific_norm(modality_name)
 
@@ -184,6 +186,8 @@ dot_product = torch.dot(g_u.view(-1), g_m.view(-1))
             for p in group["params"]:
                 if p.grad is None:
                     continue
+                if p not in self.original_params.get(name, {}):
+                    continue  # 这个参数没保存过，跳过
                 p.data.copy_(self.original_params[name][p].to(p.device))
 
         self.base_optimizer.step()
