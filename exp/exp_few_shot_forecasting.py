@@ -140,13 +140,15 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
                 if getattr(self.args, 'use_sam', False):
                     def sam_loss_fn(outputs, targets):
                         f_dim = -1 if self.args.features == 'MS' else 0
-                        # 从字典里取 fusion 结果
-                        outputs = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
+                        # 从字典里取各分支结果
+                        out_temporal = outputs['temporal'][:, -self.args.pred_len:, f_dim:]
+                        out_multimodal = outputs['multimodal'][:, -self.args.pred_len:, f_dim:]
+                        out_fusion = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
                         targets = targets[:, -self.args.pred_len:, f_dim:]
-                        loss_fusion = criterion(outputs, targets)
-                        loss_modal1 = criterion(outputs, targets)
-                        loss_modal2 = criterion(outputs, targets)
-                        return loss_fusion, loss_modal1, loss_modal2
+                        loss_temporal = criterion(out_temporal, targets)
+                        loss_multimodal = criterion(out_multimodal, targets)
+                        loss_fusion = criterion(out_fusion, targets)
+                        return loss_fusion, loss_temporal, loss_multimodal
 
                     inputs = (batch_x, batch_x_mark, dec_inp, batch_y_mark)
                     targets = batch_y
