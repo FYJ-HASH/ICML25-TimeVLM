@@ -180,8 +180,8 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
                         if not hasattr(self, 'loss_history'):
                             self.loss_history = {'temporal': [], 'multimodal': [], 'fusion': []}
                         self.loss_history['temporal'].append(loss_temporal.item())
-                        self.loss_history['multimodal'].append(loss_multimodal.item())
-                        self.loss_history['fusion'].append(loss_fusion.item())
+                        #self.loss_history['multimodal'].append(loss_multimodal.item())
+                        #self.loss_history['fusion'].append(loss_fusion.item())
 
                     if self.args.use_amp:
                         scaler.scale(loss).backward()
