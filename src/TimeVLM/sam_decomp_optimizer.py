@@ -93,7 +93,14 @@ class SAMDecompOptimizer(Optimizer):
 
     def _get_decomposed_gradients(self, g_u, g_m):
         """MDPS核心：梯度分解"""
-        dot_product = torch.dot(g_u.view(-1), g_m.view(-1))
+        # 如果 g_u 或 g_m 是 float，说明这个参数不在这个模态里，返回 0
+        if isinstance(g_u, float) or isinstance(g_m, float):
+            return {
+                'uni_parallel_multi': 0.0,
+                'uni_perpendicular_multi': 0.0,
+            }
+
+dot_product = torch.dot(g_u.view(-1), g_m.view(-1))
         norm_m_squared = torch.norm(g_m) ** 2
         
         if dot_product < 0:
