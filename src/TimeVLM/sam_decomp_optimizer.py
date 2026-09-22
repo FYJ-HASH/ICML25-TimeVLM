@@ -100,7 +100,7 @@ class SAMDecompOptimizer(Optimizer):
                 'uni_perpendicular_multi': 0.0,
             }
 
-dot_product = torch.dot(g_u.view(-1), g_m.view(-1))
+        dot_product = torch.dot(g_u.view(-1), g_m.view(-1))
         norm_m_squared = torch.norm(g_m) ** 2
         
         if dot_product < 0:
