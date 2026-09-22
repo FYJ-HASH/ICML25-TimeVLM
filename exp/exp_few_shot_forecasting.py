@@ -156,6 +156,11 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
                     loss_val = model_optim.step()
                     train_loss.append(loss_val)
                     loss = loss_val
+
+                    # 记录各模态 loss（用于画图）
+                    if not hasattr(self, 'loss_history'):
+                        self.loss_history = {'temporal': [], 'multimodal': [], 'fusion': []}
+                    self.loss_history['fusion'].append(loss_val)
                 else:
                     model_optim.zero_grad()
                     if self.args.use_amp:
