@@ -58,24 +58,31 @@ class SAMDecompOptimizer(Optimizer):
             self.base_optimizer.zero_grad()
             outputs = self.model(*inputs)
             loss_multi, loss_modal1, loss_modal2 = loss_fn(outputs, targets)
-            
+
+            # 保存三个 loss，用于记录
+            self.last_losses = {
+                'fusion': loss_multi.item(),
+                'temporal': loss_modal1.item(),
+                'multimodal': loss_modal2.item()
+            }
+
             if not only_multi:
                 # 计算融合损失梯度
                 loss_multi.backward(retain_graph=True)
                 self.multi_gradients['modal1'] = self._store_module_gradients('modal1')
                 self.multi_gradients['modal2'] = self._store_module_gradients('modal2')
                 self.base_optimizer.zero_grad()
-                
+
                 # 计算单模态1损失梯度
                 loss_modal1.backward(retain_graph=True)
                 self.uni_gradients['modal1'] = self._store_module_gradients('modal1')
                 self.base_optimizer.zero_grad()
-                
+
                 # 计算单模态2损失梯度
                 loss_modal2.backward(retain_graph=True)
                 self.uni_gradients['modal2'] = self._store_module_gradients('modal2')
                 self.base_optimizer.zero_grad()
-            
+
             total_loss = loss_multi + loss_modal1 + loss_modal2
             total_loss.backward()
             return total_loss.item(), loss_modal1.item(), loss_modal2.item()
@@ -145,7 +152,7 @@ class SAMDecompOptimizer(Optimizer):
                 decomposed = self._get_decomposed_gradients(g_u, g_m)
                 if isinstance(decomposed['uni_parallel_multi'], float):
                     continue  # 这个参数不在这个模态里，跳过
-                p.grad = decomposed['uni_parallel_multi'].clone()p.grad = decomposed['uni_parallel_multi'].clone()
+                p.grad = decomposed['uni_parallel_multi'].clone()
 
         specific_norm = self._grad_specific_norm(modality_name)
 
@@ -198,16 +205,16 @@ class SAMDecompOptimizer(Optimizer):
     def step(self, closure=None):
         """完整两步更新"""
         get_grad = closure if closure else self.forward_backward_func
-        
+
         with torch.enable_grad():
             losses = get_grad()  # 第一次前向
         self.first_step(zero_grad=True)
-        
+
         disable_running_stats(self.model)
         with torch.enable_grad():
             get_grad(only_multi=True)  # 第二次前向（扰动后）
         enable_running_stats(self.model)
-        
+
         self.second_step(zero_grad=True)
         return losses[0]
 
