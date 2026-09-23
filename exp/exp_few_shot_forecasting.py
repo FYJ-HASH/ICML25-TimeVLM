@@ -187,9 +187,16 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
     
                         #loss = loss_fusion  # 训练用融合 loss
 
-                       # loss_temporal = criterion(outputs['temporal'][:, -self.args.pred_len:, f_dim:],
+                        # loss_temporal = criterion(outputs['temporal'][:, -self.args.pred_len:, f_dim:],
                                                  # batch_y[:, -self.args.pred_len:, f_dim:].to(self.device))
-                        loss = loss_fusion
+                        # 根据 modal 参数选择用哪个 loss 训练
+                        if getattr(self.args, 'modal', None) == 'temporal':
+                           loss = loss_temporal
+                        elif getattr(self.args, 'modal', None) == 'multimodal':
+                           loss = loss_multimodal
+                        else:
+                           loss = loss_fusion
+
                         
                         train_loss.append(loss.item())
     
