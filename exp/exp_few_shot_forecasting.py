@@ -140,7 +140,6 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
                 if getattr(self.args, 'use_sam', False):
                     def sam_loss_fn(outputs, targets):
                         f_dim = -1 if self.args.features == 'MS' else 0
-                        # 从字典里取各分支结果
                         out_temporal = outputs['temporal'][:, -self.args.pred_len:, f_dim:]
                         out_multimodal = outputs['multimodal'][:, -self.args.pred_len:, f_dim:]
                         out_fusion = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
@@ -160,7 +159,12 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
                     # 记录各模态 loss（用于画图）
                     if not hasattr(self, 'loss_history'):
                         self.loss_history = {'temporal': [], 'multimodal': [], 'fusion': []}
-                    self.loss_history['fusion'].append(loss_val)
+                    # 从 model_optim.last_losses 取三个 loss
+                    self.loss_history['fusion'].append(model_optim.last_losses['fusion'])
+                    self.loss_history['temporal'].append(model_optim.last_losses['temporal'])
+                    self.loss_history['multimodal'].append(model_optim.last_losses['multimodal'])
+
+
                 else:
                     model_optim.zero_grad()
                     if self.args.use_amp:
@@ -176,11 +180,17 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
                         f_dim = -1 if self.args.features == 'MS' else 0
     
                         # 分别计算三个分支的 loss
+
                         loss_temporal = criterion(outputs['temporal'][:, -self.args.pred_len:, f_dim:], batch_y[:, -self.args.pred_len:, f_dim:].to(self.device))
                         loss_multimodal = criterion(outputs['multimodal'][:, -self.args.pred_len:, f_dim:], batch_y[:, -self.args.pred_len:, f_dim:].to(self.device))
                         loss_fusion = criterion(outputs['fusion'][:, -self.args.pred_len:, f_dim:], batch_y[:, -self.args.pred_len:, f_dim:].to(self.device))
     
-                        loss = loss_multimodal   # 训练用融合 loss
+                        #loss = loss_fusion  # 训练用融合 loss
+
+                       # loss_temporal = criterion(outputs['temporal'][:, -self.args.pred_len:, f_dim:],
+                                                 # batch_y[:, -self.args.pred_len:, f_dim:].to(self.device))
+                        loss = loss_fusion
+                        
                         train_loss.append(loss.item())
     
                         # 记录各模态 loss（用于画图）
@@ -343,3 +353,4 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
         np.save(folder_path + 'true.npy', trues)
 
         return
+
