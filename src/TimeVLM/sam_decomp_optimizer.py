@@ -39,12 +39,28 @@ class SAMDecompOptimizer(Optimizer):
         self.base_optimizer = base_optimizer(self.param_groups, **kwargs)
         self.param_groups = self.base_optimizer.param_groups
         self.perturb_eps = perturb_eps
-        
+
         # 存储梯度和参数
         self.original_params = {}
         self.multi_gradients = {}
         self.uni_gradients = {}
         self.forward_backward_func = None
+
+        # 记录 APS 和 MDPS 数据，用于画图
+        self.aps_history = []  # APS 扰动幅度
+        self.mdps_history = {  # MDPS 梯度分解
+            'modal1_multi_norm': [],  # modal1 融合梯度范数
+            'modal1_uni_norm': [],  # modal1 单模态梯度范数
+            'modal2_multi_norm': [],  # modal2 融合梯度范数
+            'modal2_uni_norm': []  # modal2 单模态梯度范数
+        }
+
+        # 存储三个 loss，用于记录
+        self.last_losses = {
+            'fusion': 0.0,
+            'temporal': 0.0,
+            'multimodal': 0.0
+        }
 
     def set_closure(self, loss_fn, inputs, targets):
         """
@@ -208,7 +224,23 @@ class SAMDecompOptimizer(Optimizer):
 
         with torch.enable_grad():
             losses = get_grad()  # 第一次前向
+
+        # 记录 MDPS 梯度分解数据
+        modal1_multi_norm = self._grad_specific_norm('modal1').item()
+        modal1_uni_norm = self._compute_uni_grad_norm('modal1')
+        modal2_multi_norm = self._grad_specific_norm('modal2').item()
+        modal2_uni_norm = self._compute_uni_grad_norm('modal2')
+
+        self.mdps_history['modal1_multi_norm'].append(modal1_multi_norm)
+        self.mdps_history['modal1_uni_norm'].append(modal1_uni_norm)
+        self.mdps_history['modal2_multi_norm'].append(modal2_multi_norm)
+        self.mdps_history['modal2_uni_norm'].append(modal2_uni_norm)
+
         self.first_step(zero_grad=True)
+
+        # 记录 APS 扰动幅度
+        aps_norm = self._compute_perturb_norm()
+        self.aps_history.append(aps_norm)
 
         disable_running_stats(self.model)
         with torch.enable_grad():
@@ -217,6 +249,30 @@ class SAMDecompOptimizer(Optimizer):
 
         self.second_step(zero_grad=True)
         return losses[0]
+
+    def _compute_uni_grad_norm(self, modality_name):
+        """计算单模态梯度的 L2 范数"""
+        gradients = self.uni_gradients.get(modality_name, {})
+        if not gradients:
+            return 0.0
+        norms = [g.norm().item() for g in gradients.values()]
+        return sum(n ** 2 for n in norms) ** 0.5
+
+    def _compute_perturb_norm(self):
+        """计算扰动幅度的 L2 范数"""
+        total_norm = 0.0
+        for group in self.param_groups:
+            name = group['name']
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                # 计算 e_w 的范数
+                e_w = p.grad * (group["rho"] / (self._grad_specific_norm(name) + self.perturb_eps))
+                if group["adaptive"]:
+                    e_w *= torch.pow(p, 2)
+                total_norm += e_w.norm().item() ** 2
+        return total_norm ** 0.5
+
 
     @torch.no_grad()
     def _grad_specific_norm(self, group_name):
