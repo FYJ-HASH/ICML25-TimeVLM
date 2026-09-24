@@ -105,8 +105,10 @@ class SAMDecompOptimizer(Optimizer):
     def _get_decomposed_gradients(self, g_u, g_m):
         if isinstance(g_u, float) or isinstance(g_m, float):
             return {'uni_parallel_multi': 0.0}
-        dot_product = torch.dot(g_u.view(-1), g_m.view(-1))
         norm_m_squared = torch.norm(g_m) ** 2
+        if norm_m_squared < 1e-12:  # 除零保护
+            return {'uni_parallel_multi': 0.0}
+        dot_product = torch.dot(g_u.view(-1), g_m.view(-1))
         if dot_product < 0:
             g_u_parallel_m = g_m.clone()
         else:
