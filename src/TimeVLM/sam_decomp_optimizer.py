@@ -25,22 +25,20 @@ class SAMDecompOptimizer(Optimizer):
     - APS: 自适应扰动（adaptive=True时生效）
     - MDPS: 多模态梯度分解扰动
     """
-    def __init__(self, params, base_optimizer, model, rho=0.05, 
+    def __init__(self, params, base_optimizer, model, rho=0.05,
                  adaptive=True, perturb_eps=1e-12, **kwargs):
-        # 初始化参数组
         for group in params:
             group.setdefault("rho", rho)
             group.setdefault("name", "other")
-        
+
         defaults = dict(adaptive=adaptive, **kwargs)
         super(SAMDecompOptimizer, self).__init__(params, defaults)
-        
+
         self.model = model
         self.base_optimizer = base_optimizer(self.param_groups, **kwargs)
         self.param_groups = self.base_optimizer.param_groups
         self.perturb_eps = perturb_eps
 
-        # 存储梯度和参数
         self.original_params = {}
         self.multi_gradients = {}
         self.uni_gradients = {}
@@ -48,14 +46,15 @@ class SAMDecompOptimizer(Optimizer):
 
         # 记录 APS 和 MDPS 数据，用于画图
         self.aps_history = []  # APS 扰动幅度
+        self._perturb_norm_sq = 0.0
+        self._current_aps_norm = 0.0
         self.mdps_history = {  # MDPS 梯度分解
-            'modal1_multi_norm': [],  # modal1 融合梯度范数
-            'modal1_uni_norm': [],  # modal1 单模态梯度范数
-            'modal2_multi_norm': [],  # modal2 融合梯度范数
-            'modal2_uni_norm': []  # modal2 单模态梯度范数
+            'modal1_multi_norm': [],
+            'modal1_uni_norm': [],
+            'modal2_multi_norm': [],
+            'modal2_uni_norm': []
         }
 
-        # 存储三个 loss，用于记录
         self.last_losses = {
             'fusion': 0.0,
             'temporal': 0.0,
@@ -63,10 +62,6 @@ class SAMDecompOptimizer(Optimizer):
         }
 
     def set_closure(self, loss_fn, inputs, targets):
-        """
-        设置损失闭包
-        loss_fn 必须返回: (融合损失, 单模态1损失, 单模态2损失)
-        """
         self.multi_gradients = {}
         self.uni_gradients = {}
 
@@ -75,7 +70,6 @@ class SAMDecompOptimizer(Optimizer):
             outputs = self.model(*inputs)
             loss_multi, loss_modal1, loss_modal2 = loss_fn(outputs, targets)
 
-            # 保存三个 loss，用于记录
             self.last_losses = {
                 'fusion': loss_multi.item(),
                 'temporal': loss_modal1.item(),
@@ -83,18 +77,15 @@ class SAMDecompOptimizer(Optimizer):
             }
 
             if not only_multi:
-                # 计算融合损失梯度
                 loss_multi.backward(retain_graph=True)
                 self.multi_gradients['modal1'] = self._store_module_gradients('modal1')
                 self.multi_gradients['modal2'] = self._store_module_gradients('modal2')
                 self.base_optimizer.zero_grad()
 
-                # 计算单模态1损失梯度
                 loss_modal1.backward(retain_graph=True)
                 self.uni_gradients['modal1'] = self._store_module_gradients('modal1')
                 self.base_optimizer.zero_grad()
 
-                # 计算单模态2损失梯度
                 loss_modal2.backward(retain_graph=True)
                 self.uni_gradients['modal2'] = self._store_module_gradients('modal2')
                 self.base_optimizer.zero_grad()
@@ -116,26 +107,24 @@ class SAMDecompOptimizer(Optimizer):
 
     def _get_decomposed_gradients(self, g_u, g_m):
         """MDPS核心：梯度分解"""
-        # 如果 g_u 或 g_m 是 float，说明这个参数不在这个模态里，返回 0
         if isinstance(g_u, float) or isinstance(g_m, float):
-            return {
-                'uni_parallel_multi': 0.0,
-                'uni_perpendicular_multi': 0.0,
-            }
+            return {'uni_parallel_multi': 0.0, 'uni_perpendicular_multi': 0.0}
 
         dot_product = torch.dot(g_u.view(-1), g_m.view(-1))
         norm_m_squared = torch.norm(g_m) ** 2
-        
+
         if dot_product < 0:
             g_u_parallel_m = g_m.clone()
         else:
             g_u_parallel_m = (dot_product / norm_m_squared) * g_m
-        
+
         return {'uni_parallel_multi': g_u_parallel_m}
 
     @torch.no_grad()
     def first_step(self, zero_grad=False):
         """第一步：施加扰动"""
+        self._perturb_norm_sq = 0.0
+
         # 保存原始参数
         for group in self.param_groups:
             name = group['name']
@@ -150,6 +139,9 @@ class SAMDecompOptimizer(Optimizer):
         self._perturb_specific_modality('modal2')
         # 对其他参数普通扰动
         self._perturb_other_params()
+
+        # 在清梯度之前，保存本次实际施加的扰动范数
+        self._current_aps_norm = (self._perturb_norm_sq ** 0.5)
 
         if zero_grad:
             self.base_optimizer.zero_grad()
@@ -167,7 +159,7 @@ class SAMDecompOptimizer(Optimizer):
                 g_m = self.multi_gradients.get(modality_name, {}).get(p, 0.0)
                 decomposed = self._get_decomposed_gradients(g_u, g_m)
                 if isinstance(decomposed['uni_parallel_multi'], float):
-                    continue  # 这个参数不在这个模态里，跳过
+                    continue
                 p.grad = decomposed['uni_parallel_multi'].clone()
 
         specific_norm = self._grad_specific_norm(modality_name)
@@ -184,6 +176,7 @@ class SAMDecompOptimizer(Optimizer):
                 if group["adaptive"]:
                     e_w *= torch.pow(p, 2)
                 p.data.add_(e_w)
+                self._perturb_norm_sq += e_w.norm().item() ** 2
 
     @torch.no_grad()
     def _perturb_other_params(self):
@@ -200,6 +193,7 @@ class SAMDecompOptimizer(Optimizer):
                 if group["adaptive"]:
                     e_w *= torch.pow(p, 2)
                 p.data.add_(e_w)
+                self._perturb_norm_sq += e_w.norm().item() ** 2
 
     @torch.no_grad()
     def second_step(self, zero_grad=False):
@@ -210,11 +204,10 @@ class SAMDecompOptimizer(Optimizer):
                 if p.grad is None:
                     continue
                 if p not in self.original_params.get(name, {}):
-                    continue  # 这个参数没保存过，跳过
+                    continue
                 p.data.copy_(self.original_params[name][p].to(p.device))
 
         self.base_optimizer.step()
-
         if zero_grad:
             self.base_optimizer.zero_grad()
 
@@ -238,8 +231,8 @@ class SAMDecompOptimizer(Optimizer):
 
         self.first_step(zero_grad=True)
 
-        # 记录 APS 扰动幅度
-        aps_norm = self._compute_perturb_norm()
+        # 记录 APS 扰动幅度（用 first_step 里实际施加的扰动范数）
+        aps_norm = self._current_aps_norm
         self.aps_history.append(aps_norm)
 
         disable_running_stats(self.model)
@@ -257,22 +250,6 @@ class SAMDecompOptimizer(Optimizer):
             return 0.0
         norms = [g.norm().item() for g in gradients.values()]
         return sum(n ** 2 for n in norms) ** 0.5
-
-    def _compute_perturb_norm(self):
-        """计算扰动幅度的 L2 范数"""
-        total_norm = 0.0
-        for group in self.param_groups:
-            name = group['name']
-            for p in group["params"]:
-                if p.grad is None:
-                    continue
-                # 计算 e_w 的范数
-                e_w = p.grad * (group["rho"] / (self._grad_specific_norm(name) + self.perturb_eps))
-                if group["adaptive"]:
-                    e_w *= torch.pow(p, 2)
-                total_norm += e_w.norm().item() ** 2
-        return total_norm ** 0.5
-
 
     @torch.no_grad()
     def _grad_specific_norm(self, group_name):
