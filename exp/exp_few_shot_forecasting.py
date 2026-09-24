@@ -34,6 +34,10 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
         if getattr(self.args, 'use_sam', False):
             model = self.model.module if hasattr(self.model, 'module') else self.model
 
+            temporal_keys = ['patch_embedding', 'temporal_head', 'memory_head',
+                             'memory_bank', 'local_memory_mlp', 'memory_attention',
+                             'memory_fusion_gate']
+
             param_groups = [
                 {"params": list(model.vlm_model.vision_model.parameters()) if hasattr(model.vlm_model,
                                                                                       'vision_model') else [],
@@ -46,7 +50,14 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
                  "rho": self.args.sam_rho,
                  "adaptive": self.args.sam_adaptive},
                 {"params": [p for n, p in model.named_parameters()
-                            if not any(x in n for x in ['vlm_model.vision_model', 'vlm_model.text_model'])],
+                            if not any(x in n for x in ['vlm_model.vision_model', 'vlm_model.text_model'])
+                            and any(k in n for k in temporal_keys)],
+                 "name": "modal3",
+                 "rho": self.args.sam_rho,
+                 "adaptive": self.args.sam_adaptive},
+                {"params": [p for n, p in model.named_parameters()
+                            if not any(x in n for x in ['vlm_model.vision_model', 'vlm_model.text_model'])
+                            and not any(k in n for k in temporal_keys)],
                  "name": "other",
                  "rho": self.args.sam_rho,
                  "adaptive": self.args.sam_adaptive},
@@ -376,3 +387,4 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
         np.save(folder_path + 'true.npy', trues)
 
         return
+
