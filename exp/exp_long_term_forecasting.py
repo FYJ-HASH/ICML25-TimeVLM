@@ -142,12 +142,17 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 if getattr(self.args, 'use_sam', False):
                     def sam_loss_fn(outputs, targets):
                         f_dim = -1 if self.args.features == 'MS' else 0
-                        outputs = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
+                        out_temporal = outputs['temporal'][:, -self.args.pred_len:, f_dim:]
+                        out_vision = outputs['vision'][:, -self.args.pred_len:, f_dim:]
+                        out_text = outputs['text'][:, -self.args.pred_len:, f_dim:]
+                        out_fusion = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
                         targets = targets[:, -self.args.pred_len:, f_dim:]
-                        loss_fusion = criterion(outputs, targets)
-                        loss_modal1 = criterion(outputs, targets)
-                        loss_modal2 = criterion(outputs, targets)
-                        return loss_fusion, loss_modal1, loss_modal2
+                        loss_temporal = criterion(out_temporal, targets)
+                        loss_vision = criterion(out_vision, targets)
+                        loss_text = criterion(out_text, targets)
+                        loss_fusion = criterion(out_fusion, targets)
+                        return loss_fusion, loss_temporal, loss_vision, loss_text
+
 
                     inputs = (batch_x, batch_x_mark, dec_inp, batch_y_mark)
                     targets = batch_y
