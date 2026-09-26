@@ -56,42 +56,51 @@ class SAMDecompOptimizer(Optimizer):
 
         self.last_losses = {'fusion': 0.0, 'temporal': 0.0, 'multimodal': 0.0}
 
-    def set_closure(self, loss_fn, inputs, targets):
+        def set_closure(self, loss_fn, inputs, targets):
         self.multi_gradients = {}
         self.uni_gradients = {}
 
         def get_grad(only_multi=False):
             self.base_optimizer.zero_grad()
             outputs = self.model(*inputs)
-            loss_multi, loss_temporal, loss_multimodal = loss_fn(outputs, targets)
+            loss_fusion, loss_temporal, loss_vision, loss_text = loss_fn(outputs, targets)
 
             self.last_losses = {
-                'fusion': loss_multi.item(),
+                'fusion': loss_fusion.item(),
                 'temporal': loss_temporal.item(),
-                'multimodal': loss_multimodal.item()
+                'vision': loss_vision.item(),
+                'text': loss_text.item()
             }
 
             if not only_multi:
-                loss_multi.backward(retain_graph=True)
+                # Step 1: Fusion loss → multi_gradients (all three branches)
+                loss_fusion.backward(retain_graph=True)
                 self.multi_gradients['vision'] = self._store_module_gradients('modal1')
                 self.multi_gradients['text'] = self._store_module_gradients('modal2')
                 self.multi_gradients['temporal'] = self._store_module_gradients('modal3')
                 self.base_optimizer.zero_grad()
 
+                # Step 2: Temporal-only loss → uni_gradients['temporal']
                 loss_temporal.backward(retain_graph=True)
                 self.uni_gradients['temporal'] = self._store_module_gradients('modal3')
                 self.base_optimizer.zero_grad()
 
-                loss_multimodal.backward(retain_graph=True)
+                # Step 3: Vision-only loss → uni_gradients['vision']
+                loss_vision.backward(retain_graph=True)
                 self.uni_gradients['vision'] = self._store_module_gradients('modal1')
+                self.base_optimizer.zero_grad()
+
+                # Step 4: Text-only loss → uni_gradients['text']
+                loss_text.backward(retain_graph=True)
                 self.uni_gradients['text'] = self._store_module_gradients('modal2')
                 self.base_optimizer.zero_grad()
 
-            total_loss = loss_multi + loss_temporal + loss_multimodal
+            total_loss = loss_fusion + loss_temporal + loss_vision + loss_text
             total_loss.backward()
-            return total_loss.item(), loss_temporal.item(), loss_multimodal.item()
+            return total_loss.item(), loss_temporal.item(), loss_vision.item(), loss_text.item()
 
         self.forward_backward_func = get_grad
+
 
     def _store_module_gradients(self, module_name):
         gradients = {}
