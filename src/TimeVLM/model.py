@@ -138,6 +138,33 @@ class Model(nn.Module):
             nn.GELU(),
             nn.Dropout(config.dropout)
         )
+
+                # Vision-only enhancement and head (for MDPS independent vision gradient)
+        self.vision_enhancement = nn.Sequential(
+            nn.Linear(self.vlm_manager.hidden_size, config.d_model),
+            nn.GELU(),
+            nn.Dropout(config.dropout)
+        )
+        self.vision_head = nn.Sequential(
+            nn.Linear(config.d_model, config.pred_len),
+            nn.LayerNorm(config.pred_len),
+            nn.GELU(),
+            nn.Dropout(config.dropout)
+        )
+
+        # Text-only enhancement and head (for MDPS independent text gradient)
+        self.text_enhancement = nn.Sequential(
+            nn.Linear(self.vlm_manager.hidden_size, config.d_model),
+            nn.GELU(),
+            nn.Dropout(config.dropout)
+        )
+        self.text_head = nn.Sequential(
+            nn.Linear(config.d_model, config.pred_len),
+            nn.LayerNorm(config.pred_len),
+            nn.GELU(),
+            nn.Dropout(config.dropout)
+        )
+
         
         # Cross-modal attention for feature enhancement
         self.cross_attention = nn.MultiheadAttention(
