@@ -116,13 +116,19 @@ class Exp_Short_Term_Forecast(Exp_Basic):
                 if getattr(self.args, 'use_sam', False):
                     def sam_loss_fn(outputs, targets):
                         f_dim = -1 if self.args.features == 'MS' else 0
-                        outputs = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
+                        out_temporal = outputs['temporal'][:, -self.args.pred_len:, f_dim:]
+                        out_vision = outputs['vision'][:, -self.args.pred_len:, f_dim:]
+                        out_text = outputs['text'][:, -self.args.pred_len:, f_dim:]
+                        out_fusion = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
                         targets = targets[:, -self.args.pred_len:, f_dim:]
                         batch_y_mark_local = batch_y_mark[:, -self.args.pred_len:, f_dim:]
-                        loss_fusion = criterion(batch_x, self.args.frequency_map, outputs, targets, batch_y_mark_local)
-                        loss_modal1 = loss_fusion
-                        loss_modal2 = loss_fusion
-                        return loss_fusion, loss_modal1, loss_modal2
+                        loss_temporal = criterion(batch_x, self.args.frequency_map, out_temporal, targets, batch_y_mark_local)
+                        loss_vision = criterion(batch_x, self.args.frequency_map, out_vision, targets, batch_y_mark_local)
+                        loss_text = criterion(batch_x, self.args.frequency_map, out_text, targets, batch_y_mark_local)
+                        loss_fusion = criterion(batch_x, self.args.frequency_map, out_fusion, targets, batch_y_mark_local)
+                        return loss_fusion, loss_temporal, loss_vision, loss_text
+
+
 
                     inputs = (batch_x, None, dec_inp, None)
                     targets = batch_y
