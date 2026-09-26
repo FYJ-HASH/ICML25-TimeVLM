@@ -155,13 +155,15 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
                     def sam_loss_fn(outputs, targets):
                         f_dim = -1 if self.args.features == 'MS' else 0
                         out_temporal = outputs['temporal'][:, -self.args.pred_len:, f_dim:]
-                        out_multimodal = outputs['multimodal'][:, -self.args.pred_len:, f_dim:]
+                        out_vision = outputs['vision'][:, -self.args.pred_len:, f_dim:]
+                        out_text = outputs['text'][:, -self.args.pred_len:, f_dim:]
                         out_fusion = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
                         targets = targets[:, -self.args.pred_len:, f_dim:]
                         loss_temporal = criterion(out_temporal, targets)
-                        loss_multimodal = criterion(out_multimodal, targets)
+                        loss_vision = criterion(out_vision, targets)
+                        loss_text = criterion(out_text, targets)
                         loss_fusion = criterion(out_fusion, targets)
-                        return loss_fusion, loss_temporal, loss_multimodal
+                        return loss_fusion, loss_temporal, loss_vision, loss_text
 
                     inputs = (batch_x, batch_x_mark, dec_inp, batch_y_mark)
                     targets = batch_y
@@ -171,12 +173,13 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
                     loss = loss_val
 
                     # 记录各模态 loss（用于画图）
-                    if not hasattr(self, 'loss_history'):
-                        self.loss_history = {'temporal': [], 'multimodal': [], 'fusion': []}
-                    # 从 model_optim.last_losses 取三个 loss
+                                        if not hasattr(self, 'loss_history'):
+                        self.loss_history = {'temporal': [], 'vision': [], 'text': [], 'fusion': []}
+                    # 从 model_optim.last_losses 取各分支 loss
                     self.loss_history['fusion'].append(model_optim.last_losses['fusion'])
                     self.loss_history['temporal'].append(model_optim.last_losses['temporal'])
-                    self.loss_history['multimodal'].append(model_optim.last_losses['multimodal'])
+                    self.loss_history['vision'].append(model_optim.last_losses['vision'])
+                    self.loss_history['text'].append(model_optim.last_losses['text'])
 
 
                 else:
