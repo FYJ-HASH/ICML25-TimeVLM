@@ -139,7 +139,7 @@ class Model(nn.Module):
             nn.Dropout(config.dropout)
         )
 
-                # Vision-only enhancement and head (for MDPS independent vision gradient)
+        # Vision-only enhancement and head (for MDPS independent vision gradient)
         self.vision_enhancement = nn.Sequential(
             nn.Linear(self.vlm_manager.hidden_size, config.d_model),
             nn.GELU(),
@@ -288,7 +288,21 @@ class Model(nn.Module):
         memory_features = self.memory_head(memory_features)  # [B * n_vars, pred_len]
         temporal_features = einops.rearrange(temporal_features, '(b n) d -> b n d', b=B, n=n_vars)  # [B, n_vars, d_model]
         memory_features = einops.rearrange(memory_features, '(b n) d -> b n d', b=B, n=n_vars)  # [B, n_vars, pred_len]
-        
+
+
+        # 5a. Vision-only prediction (independent branch for MDPS)
+        vision_only_features = self.vision_enhancement(vision_embeddings)  # [B, d_model]
+        vision_only_features = vision_only_features.unsqueeze(1).expand(-1, n_vars, -1)
+        vision_only_features = self.layer_norm(vision_only_features)
+        vision_only_pred = self.vision_head(vision_only_features)  # [B, n_vars, pred_len]
+
+        # 5b. Text-only prediction (independent branch for MDPS)
+        text_only_features = self.text_enhancement(text_embeddings)  # [B, d_model]
+        text_only_features = text_only_features.unsqueeze(1).expand(-1, n_vars, -1)
+        text_only_features = self.layer_norm(text_only_features)
+        text_only_pred = self.text_head(text_only_features)  # [B, n_vars, pred_len]
+
+
         # 5. Process multimodal features
         multimodal_features = torch.cat([vision_embeddings, text_embeddings], dim=-1)  # [B, hidden_size * 2]
         multimodal_features = self.multimodal_enhancement(multimodal_features)  # [B, d_model]
@@ -324,10 +338,12 @@ class Model(nn.Module):
         ) + memory_features  # [B, n_vars, pred_len]
         
         #return predictions.permute(0, 2, 1)  # [B, pred_len, n_vars]
-        return {
-            'temporal': memory_features.permute(0, 2, 1),       # 纯时序分支
-            'multimodal': multimodal_features.permute(0, 2, 1), # 多模态分支（图像+文本）
-            'fusion': predictions.permute(0, 2, 1),             # 融合后
+             return {
+            'temporal': memory_features.permute(0, 2, 1),
+            'multimodal': multimodal_features.permute(0, 2, 1),
+            'vision': vision_only_pred.permute(0, 2, 1),   # 新增
+            'text': text_only_pred.permute(0, 2, 1),       # 新增
+            'fusion': predictions.permute(0, 2, 1),
         }
 
     def forward(self, x_enc, x_mark_enc=None, x_dec=None, x_mark_dec=None, mask=None):
@@ -355,8 +371,11 @@ class Model(nn.Module):
         return {
             'temporal': self._denormalize_output(preds_dict['temporal'], means, stdev),
             'multimodal': self._denormalize_output(preds_dict['multimodal'], means, stdev),
+            'vision': self._denormalize_output(preds_dict['vision'], means, stdev),   # 新增
+            'text': self._denormalize_output(preds_dict['text'], means, stdev),       # 新增
             'fusion': self._denormalize_output(preds_dict['fusion'], means, stdev),
          }
+
 
     def _normalize_input(self, x):
         means = x.mean(1, keepdim=True).detach()
