@@ -56,6 +56,16 @@ class SAMDecompOptimizer(Optimizer):
 
         self.last_losses = {'fusion': 0.0, 'temporal': 0.0, 'multimodal': 0.0}
 
+        # ===== 新增：论文版 APS 分数相关 =====
+        self.aps_score_history = {'vision': [], 'text': [], 'temporal': []}
+        self.gamma_history = {'vision': [], 'text': [], 'temporal': []}
+        self.decay_history = {'vision': [], 'text': [], 'temporal': []}
+        self.dominant_history = []  # 记录每个 step 的主导模态
+        self.prev_branch_losses = {'vision': 0.0, 'text': 0.0, 'temporal': 0.0}
+        self.ma_losses = {'vision': None, 'text': None, 'temporal': None}
+        self.alpha = 0.5  # APS 权重：α·Decay + (1-α)·γ
+        self.dominant_modality = 'temporal'  # 当前主导模态
+
         def set_closure(self, loss_fn, inputs, targets):
         self.multi_gradients = {}
         self.uni_gradients = {}
@@ -111,6 +121,62 @@ class SAMDecompOptimizer(Optimizer):
                         gradients[p] = p.grad.clone().detach()
         return gradients
 
+    def _compute_cosine_similarity(self, branch_key):
+        """计算 fusion_grad 和 single_grad 的余弦相似度 γ_m"""
+        g_fuse = self.multi_gradients.get(branch_key, {})
+        g_single = self.uni_gradients.get(branch_key, {})
+        if not g_fuse or not g_single:
+            return 0.0
+        dot = 0.0
+        norm_fuse = 0.0
+        norm_single = 0.0
+        for p in g_fuse:
+            if p in g_single:
+                dot += (g_fuse[p] * g_single[p]).sum().item()
+                norm_fuse += (g_fuse[p] ** 2).sum().item()
+                norm_single += (g_single[p] ** 2).sum().item()
+        norm_fuse = norm_fuse ** 0.5
+        norm_single = norm_single ** 0.5
+        if norm_fuse < 1e-12 or norm_single < 1e-12:
+            return 0.0
+        return dot / (norm_fuse * norm_single)
+
+    def _compute_aps_scores(self):
+        """计算每个模态的 APS 分数，找出主导模态"""
+        # 1. 计算 Decay（loss 下降速度）
+        decay = {}
+        for m in ['vision', 'text', 'temporal']:
+            current_loss = self.last_losses[m]
+            if self.ma_losses[m] is not None:
+                ma_prev = self.ma_losses[m]
+                decay[m] = max(0.0, ma_prev - current_loss)
+                # 更新移动平均
+                self.ma_losses[m] = 0.9 * self.ma_losses[m] + 0.1 * current_loss
+            else:
+                decay[m] = 0.0
+                self.ma_losses[m] = current_loss
+
+        # 2. 计算 γ_m（余弦相似度）
+        gamma = {}
+        for m in ['vision', 'text', 'temporal']:
+            gamma[m] = self._compute_cosine_similarity(m)
+
+        # 3. 计算 APS = α·Decay + (1-α)·γ
+        aps = {}
+        for m in ['vision', 'text', 'temporal']:
+            aps[m] = self.alpha * decay[m] + (1 - self.alpha) * gamma[m]
+
+        # 4. 找出主导模态
+        self.dominant_modality = max(aps, key=aps.get)
+
+        # 5. 存起来
+        self._current_decay = decay
+        self._current_gamma = gamma
+        self._current_aps = aps
+
+        return aps, gamma, decay, self.dominant_modality
+
+
     def _get_decomposed_gradients(self, g_u, g_m):
         if isinstance(g_u, float) or isinstance(g_m, float):
             return {'uni_parallel_multi': 0.0}
@@ -136,9 +202,12 @@ class SAMDecompOptimizer(Optimizer):
                 if p.grad is not None:
                     self.original_params[name][p] = p.data.clone().detach()
 
-        self._perturb_specific_modality('modal1')
-        self._perturb_specific_modality('modal2')
-        self._perturb_specific_modality('modal3')
+        # ===== 只对主导模态加 SAM 扰动 =====
+        modal_map = {'vision': 'modal1', 'text': 'modal2', 'temporal': 'modal3'}
+        dominant_modal = modal_map[self.dominant_modality]
+        self._perturb_specific_modality(dominant_modal)
+        # ====================================
+
         self._perturb_other_params()
 
         self._current_aps_norm = {
@@ -217,12 +286,19 @@ class SAMDecompOptimizer(Optimizer):
         with torch.enable_grad():
             losses = get_grad()
 
-        self.mdps_history['vision_multi_norm'].append(self._grad_specific_norm('modal1').item())
-        self.mdps_history['vision_uni_norm'].append(self._compute_uni_grad_norm('vision'))
-        self.mdps_history['text_multi_norm'].append(self._grad_specific_norm('modal2').item())
-        self.mdps_history['text_uni_norm'].append(self._compute_uni_grad_norm('text'))
-        self.mdps_history['temporal_multi_norm'].append(self._grad_specific_norm('modal3').item())
-        self.mdps_history['temporal_uni_norm'].append(self._compute_uni_grad_norm('temporal'))
+        # ===== 新增：计算 APS 分数和 γ_m =====
+        aps, gamma, decay, dominant = self._compute_aps_scores()
+        self.aps_score_history['vision'].append(aps['vision'])
+        self.aps_score_history['text'].append(aps['text'])
+        self.aps_score_history['temporal'].append(aps['temporal'])
+        self.gamma_history['vision'].append(gamma['vision'])
+        self.gamma_history['text'].append(gamma['text'])
+        self.gamma_history['temporal'].append(gamma['temporal'])
+        self.decay_history['vision'].append(decay['vision'])
+        self.decay_history['text'].append(decay['text'])
+        self.decay_history['temporal'].append(decay['temporal'])
+        self.dominant_history.append(dominant)
+        # ====================================
 
         self.first_step(zero_grad=True)
 
