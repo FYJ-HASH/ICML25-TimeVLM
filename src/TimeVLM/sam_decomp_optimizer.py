@@ -66,9 +66,9 @@ class SAMDecompOptimizer(Optimizer):
         self.alpha = 0.5  # APS 权重：α·Decay + (1-α)·γ
         self.dominant_modality = 'temporal'  # 当前主导模态
 
-        def set_closure(self, loss_fn, inputs, targets):
-            self.multi_gradients = {}
-            self.uni_gradients = {}
+    def set_closure(self, loss_fn, inputs, targets):
+        self.multi_gradients = {}
+        self.uni_gradients = {}
 
         def get_grad(only_multi=False):
             self.base_optimizer.zero_grad()
