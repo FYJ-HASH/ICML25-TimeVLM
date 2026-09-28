@@ -264,10 +264,14 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
 
         # 保存 APS 和 MDPS 历史到文件
         if getattr(self.args, 'use_sam', False):
-            sam_data = {
+           sam_data = {
                 'aps': model_optim.aps_history,
-                'mdps': model_optim.mdps_history
+                'mdps': model_optim.mdps_history,
+                'aps_score': model_optim.aps_score_history,
+                'gamma': model_optim.gamma_history,
+                'dominant': model_optim.dominant_history,
             }
+
             with open(f'sam_history_{setting}.json', 'w') as f:
                 json.dump(sam_data, f)
             print(f"SAM history saved to sam_history_{setting}.json")
