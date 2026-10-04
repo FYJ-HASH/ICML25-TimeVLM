@@ -1,4 +1,3 @@
-from src.TimeVLM.sam_decomp_optimizer import SAMDecompOptimizer
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
 from utils.tools import EarlyStopping, adjust_learning_rate, visual
@@ -10,10 +9,9 @@ import os
 import time
 import warnings
 import numpy as np
-from utils.dtw_metric import dtw, accelerated_dtw
+from utils.dtw_metric import dtw,accelerated_dtw
 
 warnings.filterwarnings('ignore')
-
 
 class Exp_Few_Shot_Forecast(Exp_Basic):
     def __init__(self, args):
@@ -31,51 +29,8 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
         return data_set, data_loader
 
     def _select_optimizer(self):
-        if getattr(self.args, 'use_sam', False):
-            model = self.model.module if hasattr(self.model, 'module') else self.model
-
-            temporal_keys = ['patch_embedding', 'temporal_head', 'memory_head',
-                             'memory_bank', 'local_memory_mlp', 'memory_attention',
-                             'memory_fusion_gate']
-
-            param_groups = [
-                {"params": list(model.vlm_model.vision_model.parameters()) if hasattr(model.vlm_model,
-                                                                                      'vision_model') else [],
-                 "name": "modal1",
-                 "rho": self.args.sam_rho,
-                 "adaptive": self.args.sam_adaptive},
-                {"params": list(model.vlm_model.text_model.parameters()) if hasattr(model.vlm_model,
-                                                                                    'text_model') else [],
-                 "name": "modal2",
-                 "rho": self.args.sam_rho,
-                 "adaptive": self.args.sam_adaptive},
-                {"params": [p for n, p in model.named_parameters()
-                            if not any(x in n for x in ['vlm_model.vision_model', 'vlm_model.text_model'])
-                            and any(k in n for k in temporal_keys)],
-                 "name": "modal3",
-                 "rho": self.args.sam_rho,
-                 "adaptive": self.args.sam_adaptive},
-                {"params": [p for n, p in model.named_parameters()
-                            if not any(x in n for x in ['vlm_model.vision_model', 'vlm_model.text_model'])
-                            and not any(k in n for k in temporal_keys)],
-                 "name": "other",
-                 "rho": self.args.sam_rho,
-                 "adaptive": self.args.sam_adaptive},
-            ]
-
-            base_optimizer = optim.Adam
-            model_optim = SAMDecompOptimizer(
-                params=param_groups,
-                base_optimizer=base_optimizer,
-                model=model,
-                rho=self.args.sam_rho,
-                adaptive=self.args.sam_adaptive,
-                lr=self.args.learning_rate,
-            )
-            return model_optim
-        else:
-            model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
-            return model_optim
+        model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
+        return model_optim
 
     def _select_criterion(self):
         criterion = nn.MSELoss()
@@ -102,7 +57,7 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
                 else:
                     outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 f_dim = -1 if self.args.features == 'MS' else 0
-                outputs = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
+                outputs = outputs[:, -self.args.pred_len:, f_dim:]
                 batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
 
                 pred = outputs.detach().cpu()
@@ -143,100 +98,50 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
             epoch_time = time.time()
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
                 iter_count += 1
+                model_optim.zero_grad()
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
                 batch_y_mark = batch_y_mark.float().to(self.device)
 
+                # decoder input
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
 
-                if getattr(self.args, 'use_sam', False):
-                    def sam_loss_fn(outputs, targets):
-                        f_dim = -1 if self.args.features == 'MS' else 0
-                        out_temporal = outputs['temporal'][:, -self.args.pred_len:, f_dim:]
-                        out_vision = outputs['vision'][:, -self.args.pred_len:, f_dim:]
-                        out_text = outputs['text'][:, -self.args.pred_len:, f_dim:]
-                        out_fusion = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
-                        targets = targets[:, -self.args.pred_len:, f_dim:]
-                        loss_temporal = criterion(out_temporal, targets)
-                        loss_vision = criterion(out_vision, targets)
-                        loss_text = criterion(out_text, targets)
-                        loss_fusion = criterion(out_fusion, targets)
-                        return loss_fusion, loss_temporal, loss_vision, loss_text
-
-                    inputs = (batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                    targets = batch_y
-                    model_optim.set_closure(sam_loss_fn, inputs, targets)
-                    loss_val = model_optim.step()
-                    train_loss.append(loss_val)
-                    loss = loss_val
-
-                    # 记录各模态 loss（用于画图）
-                                        if not hasattr(self, 'loss_history'):
-                        self.loss_history = {'temporal': [], 'vision': [], 'text': [], 'fusion': []}
-                    # 从 model_optim.last_losses 取各分支 loss
-                    self.loss_history['fusion'].append(model_optim.last_losses['fusion'])
-                    self.loss_history['temporal'].append(model_optim.last_losses['temporal'])
-                    self.loss_history['vision'].append(model_optim.last_losses['vision'])
-                    self.loss_history['text'].append(model_optim.last_losses['text'])
-
-
-                else:
-                    model_optim.zero_grad()
-                    if self.args.use_amp:
-                        with torch.cuda.amp.autocast():
-                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                            f_dim = -1 if self.args.features == 'MS' else 0
-                            outputs = outputs['fusion'][:, -self.args.pred_len:, f_dim:]
-                            batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
-                            loss = criterion(outputs, batch_y)
-                            train_loss.append(loss.item())
-                    else:
+                # encoder - decoder
+                if self.args.use_amp:
+                    with torch.cuda.amp.autocast():
                         outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+
                         f_dim = -1 if self.args.features == 'MS' else 0
-
-                        # 分别计算三个分支的 loss
-
-                        loss_temporal = criterion(outputs['temporal'][:, -self.args.pred_len:, f_dim:],
-                                                  batch_y[:, -self.args.pred_len:, f_dim:].to(self.device))
-                        loss_multimodal = criterion(outputs['multimodal'][:, -self.args.pred_len:, f_dim:],
-                                                    batch_y[:, -self.args.pred_len:, f_dim:].to(self.device))
-                        loss_fusion = criterion(outputs['fusion'][:, -self.args.pred_len:, f_dim:],
-                                                batch_y[:, -self.args.pred_len:, f_dim:].to(self.device))
-
-                        # loss = loss_fusion  # 训练用融合 loss
-
-                        # loss_temporal = criterion(outputs['temporal'][:, -self.args.pred_len:, f_dim:],
-                        # batch_y[:, -self.args.pred_len:, f_dim:].to(self.device))
-                        loss = loss_multimodal
-
+                        outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                        batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                        loss = criterion(outputs, batch_y)
                         train_loss.append(loss.item())
+                else:
+                    outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
 
-                        # 记录各模态 loss（用于画图）
-                        if not hasattr(self, 'loss_history'):
-                            self.loss_history = {'temporal': [], 'multimodal': [], 'fusion': []}
-                        self.loss_history['temporal'].append(loss_temporal.item())
-                        self.loss_history['multimodal'].append(loss_multimodal.item())
-                        self.loss_history['fusion'].append(loss_fusion.item())
-
-                    if self.args.use_amp:
-                        scaler.scale(loss).backward()
-                        scaler.step(model_optim)
-                        scaler.update()
-                    else:
-                        loss.backward()
-                        model_optim.step()
+                    f_dim = -1 if self.args.features == 'MS' else 0
+                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                    batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                    loss = criterion(outputs, batch_y)
+                    train_loss.append(loss.item())
 
                 if (i + 1) % 100 == 0:
-                    print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1,
-                                                                            loss.item() if hasattr(loss,
-                                                                                                   'item') else loss))
+                    print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
                     speed = (time.time() - time_now) / iter_count
                     left_time = speed * ((self.args.train_epochs - epoch) * train_steps - i)
                     print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
                     iter_count = 0
                     time_now = time.time()
+
+                if self.args.use_amp:
+                    scaler.scale(loss).backward()
+                    scaler.step(model_optim)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    model_optim.step()
 
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
@@ -255,41 +160,19 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
         best_model_path = path + '/' + 'checkpoint.pth'
         self.model.load_state_dict(torch.load(best_model_path))
 
-        # 保存 loss 历史到文件
-        import json
-        if hasattr(self, 'loss_history'):
-            with open(f'loss_history_{setting}.json', 'w') as f:
-                json.dump(self.loss_history, f)
-            print(f"Loss history saved to loss_history_{setting}.json")
-
-        # 保存 APS 和 MDPS 历史到文件
-        if getattr(self.args, 'use_sam', False):
-           sam_data = {
-                'aps': model_optim.aps_history,
-                'mdps': model_optim.mdps_history,
-                'aps_score': model_optim.aps_score_history,
-                'gamma': model_optim.gamma_history,
-                'dominant': model_optim.dominant_history,
-            }
-
-            with open(f'sam_history_{setting}.json', 'w') as f:
-                json.dump(sam_data, f)
-            print(f"SAM history saved to sam_history_{setting}.json")
-
         return self.model
 
     def test(self, setting, test=0):
         test_data, test_loader = self._get_data(flag='test')
-
+        
         if isinstance(test_data, torch.utils.data.Subset):
             data_scaling = test_data.dataset.scale
         else:
             data_scaling = test_data.scale
-
+        
         if test:
             print('loading model')
-            self.model.load_state_dict(
-                torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth'), map_location=self.device))
+            self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth'), map_location=self.device))
 
         preds = []
         trues = []
@@ -317,21 +200,19 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
                     outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
 
                 f_dim = -1 if self.args.features == 'MS' else 0
-                outputs = outputs['fusion'][:, -self.args.pred_len:, :]
+                outputs = outputs[:, -self.args.pred_len:, :]
                 batch_y = batch_y[:, -self.args.pred_len:, :].to(self.device)
                 outputs = outputs.detach().cpu().numpy()
                 batch_y = batch_y.detach().cpu().numpy()
                 if data_scaling and self.args.inverse:
                     shape = outputs.shape
                     if isinstance(test_data, torch.utils.data.Subset):
-                        outputs = test_data.dataset.inverse_transform(outputs.reshape(shape[0] * shape[1], -1)).reshape(
-                            shape)
-                        batch_y = test_data.dataset.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(
-                            shape)
+                        outputs = test_data.dataset.inverse_transform(outputs.reshape(shape[0] * shape[1], -1)).reshape(shape)
+                        batch_y = test_data.dataset.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(shape)
                     else:
                         outputs = test_data.inverse_transform(outputs.reshape(shape[0] * shape[1], -1)).reshape(shape)
                         batch_y = test_data.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(shape)
-
+        
                 outputs = outputs[:, :, f_dim:]
                 batch_y = batch_y[:, :, f_dim:]
 
@@ -345,8 +226,7 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
                     if data_scaling and self.args.inverse:
                         shape = input.shape
                         if isinstance(test_data, torch.utils.data.Subset):
-                            input = test_data.dataset.inverse_transform(input.reshape(shape[0] * shape[1], -1)).reshape(
-                                shape)
+                            input = test_data.dataset.inverse_transform(input.reshape(shape[0] * shape[1], -1)).reshape(shape)
                         else:
                             input = test_data.inverse_transform(input.reshape(shape[0] * shape[1], -1)).reshape(shape)
                     gt = np.concatenate((input[0, :, -1], true[0, :, -1]), axis=0)
@@ -364,14 +244,14 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
         folder_path = './results/' + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
-
+        
         # dtw calculation
         if self.args.use_dtw:
             dtw_list = []
             manhattan_distance = lambda x, y: np.abs(x - y)
             for i in range(preds.shape[0]):
-                x = preds[i].reshape(-1, 1)
-                y = trues[i].reshape(-1, 1)
+                x = preds[i].reshape(-1,1)
+                y = trues[i].reshape(-1,1)
                 if i % 100 == 0:
                     print("calculating dtw iter:", i)
                 d, _, _, _ = accelerated_dtw(x, y, dist=manhattan_distance)
@@ -394,4 +274,3 @@ class Exp_Few_Shot_Forecast(Exp_Basic):
         np.save(folder_path + 'true.npy', trues)
 
         return
-
