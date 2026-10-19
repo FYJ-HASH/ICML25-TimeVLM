@@ -7,9 +7,9 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import StandardScaler
 from utils.timefeatures import time_features
-from data_provider.m4 import M4Dataset, M4Meta
+#from data_provider.m4 import M4Dataset, M4Meta
 from data_provider.uea import subsample, interpolate_missing, Normalizer
-from sktime.datasets import load_from_tsfile_to_dataframe
+#from sktime.datasets import load_from_tsfile_to_dataframe
 import warnings
 from utils.augmentation import run_augmentation_single
 
@@ -50,6 +50,12 @@ class Dataset_ETT_hour(Dataset):
         self.scaler = StandardScaler()
         df_raw = pd.read_csv(os.path.join(self.root_path,
                                           self.data_path))
+
+        # ==========新增下面这一段清洗代码==========
+        # 遍历所有单元格，把numpy数组/标量转为普通python数值
+        for col in df_raw.columns:
+            df_raw[col] = df_raw[col].apply(lambda x: x.item() if isinstance(x, np.generic) else x)
+        # ========================================
 
         border1s = [0, 12 * 30 * 24 - self.seq_len, 12 * 30 * 24 + 4 * 30 * 24 - self.seq_len]
         border2s = [12 * 30 * 24, 12 * 30 * 24 + 4 * 30 * 24, 12 * 30 * 24 + 8 * 30 * 24]
@@ -143,6 +149,11 @@ class Dataset_ETT_minute(Dataset):
         self.scaler = StandardScaler()
         df_raw = pd.read_csv(os.path.join(self.root_path,
                                           self.data_path))
+
+        # ==========新增清洗代码==========
+        for col in df_raw.columns:
+            df_raw[col] = df_raw[col].apply(lambda x: x.item() if hasattr(x, "item") else x)
+        # ==============================
 
         border1s = [0, 12 * 30 * 24 * 4 - self.seq_len, 12 * 30 * 24 * 4 + 4 * 30 * 24 * 4 - self.seq_len]
         border2s = [12 * 30 * 24 * 4, 12 * 30 * 24 * 4 + 4 * 30 * 24 * 4, 12 * 30 * 24 * 4 + 8 * 30 * 24 * 4]
@@ -238,6 +249,10 @@ class Dataset_Custom(Dataset):
         self.scaler = StandardScaler()
         df_raw = pd.read_csv(os.path.join(self.root_path,
                                           self.data_path))
+        # ==========新增清洗代码==========
+        for col in df_raw.columns:
+            df_raw[col] = df_raw[col].apply(lambda x: x.item() if hasattr(x, "item") else x)
+        # ==============================
 
         '''
         df_raw.columns: ['date', ...(other features), target feature]
